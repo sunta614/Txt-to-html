@@ -222,3 +222,112 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Bot crashed: {e}")
             time.sleep(5)
+
+import os
+import html
+from telegram import Update, InputFile
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+
+# Bot configuration
+BOT_TOKEN = os.getenv('BOT_TOKEN')  # Set in Render environment variables
+ALLOWED_USER_IDS = []  # Add your user ID if you want to restrict access
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send a welcome message when the command /start is issued."""
+    await update.message.reply_text(
+        '📄 TXT to HTML Converter Bot\n\n'
+        'Send me a .txt file and I will convert it to HTML format!'
+    )
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send a help message when the command /help is issued."""
+    await update.message.reply_text(
+        'Simply send me a .txt file and I will convert it to HTML.\n\n'
+        'The HTML file will preserve your original formatting with:\n'
+        '- Paragraphs (<p> tags)\n'
+        '- Line breaks (<br> tags)\n'
+        '- Special characters properly escaped'
+    )
+
+def convert_txt_to_html(txt_content):
+    """Convert plain text to basic HTML format."""
+    # Escape HTML special characters
+    escaped_content = html.escape(txt_content)
+    
+    # Replace line breaks with HTML tags
+    html_content = escaped_content.replace('\n\n', '</p><p>')  # Double newline = paragraph
+    html_content = html_content.replace('\n', '<br>')          # Single newline = line break
+    
+    # Wrap in basic HTML structure
+    full_html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Converted Document</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; line-height: 1.6; padding: 20px; }}
+    </style>
+</head>
+<body>
+    <p>{html_content}</p>
+</body>
+</html>"""
+    
+    return full_html
+
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the document upload and convert it to HTML."""
+    # Check if user is allowed (if restrictions are set)
+    if ALLOWED_USER_IDS and update.effective_user.id not in ALLOWED_USER_IDS:
+        await update.message.reply_text("Sorry, you're not authorized to use this bot.")
+        return
+    
+    document = update.message.document
+    
+    # Check if it's a .txt file
+    if not document.file_name.lower().endswith('.txt'):
+        await update.message.reply_text("Please send a .txt file.")
+        return
+    
+    # Download the file
+    file = await context.bot.get_file(document.file_id)
+    txt_file = await file.download_to_drive()
+    
+    # Read the file content
+    with open(txt_file, 'r', encoding='utf-8') as f:
+        txt_content = f.read()
+    
+    # Convert to HTML
+    html_content = convert_txt_to_html(txt_content)
+    
+    # Create HTML file
+    html_filename = os.path.splitext(document.file_name)[0] + '.html'
+    with open(html_filename, 'w', encoding='utf-8') as f:
+        f.write(html_content)
+    
+    # Send the HTML file back
+    with open(html_filename, 'rb') as f:
+        await update.message.reply_document(
+            document=InputFile(f, filename=html_filename),
+            caption="Here's your HTML file!"
+        )
+    
+    # Clean up temporary files
+    os.remove(txt_file)
+    os.remove(html_filename)
+
+def main():
+    """Start the bot."""
+    # Create the Application
+    application = Application.builder().token(BOT_TOKEN).build()
+    
+    # Add handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+    
+    # Start the bot
+    application.run_polling()
+
+if __name__ == '__main__':
+    main()
